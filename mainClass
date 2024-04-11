@@ -1,0 +1,93 @@
+using Autodesk.Revit.Attributes;
+using Autodesk.Revit.DB;
+using Autodesk.Revit.UI;
+using System;
+using System.Collections.Generic;
+using System.IO;
+using System.Text;
+
+namespace bassTools
+{
+    [Transaction(TransactionMode.Manual)]
+    public class CopyID_ToParameter : IExternalCommand
+    {
+        public Result Execute(ExternalCommandData commandData, ref string message, ElementSet elements)
+        {
+            UIDocument uiDoc = commandData.Application.ActiveUIDocument;
+            Document doc = uiDoc.Document;
+            List<ElementId> elementsIDSelected = GetSelectedElementIds(uiDoc);
+            CreateCSV(elementsIDSelected, doc);
+            TaskDialog.Show("Finished", "Success");
+            return Result.Succeeded;
+        }
+
+        private void CreateCSV(List<ElementId> elementsIDSelected, Document doc)
+        {
+            string documentName = Path.GetFileNameWithoutExtension(doc.PathName);
+            string documentsFolder = Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments);
+            string filePath = Path.Combine(documentsFolder, documentName + ".csv");
+            string header = "Category;Family Name;Type Name;ID_Element;Total Surface Area\n";
+
+            using (StreamWriter writer = new StreamWriter(filePath, false, Encoding.UTF8))
+            {
+                writer.Write(header);
+
+                foreach (ElementId elemID in elementsIDSelected)
+                {
+                    Element elem = doc.GetElement(elemID);
+                    string categoryName = (elem.Category != null) ? elem.Category.Name : "";
+                    string typeName = elem.Name;
+                    string familyName = "";
+
+                    ElementId typeId = elem.GetTypeId();
+                    Element elementType = doc.GetElement(typeId);
+                    if (elementType != null)
+                    {
+                        Parameter familyNameParam = elementType.get_Parameter(BuiltInParameter.SYMBOL_FAMILY_NAME_PARAM);
+                        familyName = familyNameParam.AsString();
+                    }
+
+                    string totalSurfaceArea = GetTotalSurfaceArea(elem).ToString("0.0000").Replace(".", ",");
+                    string line = $"{categoryName};{familyName};{typeName};{elem.Id};{totalSurfaceArea}\n";
+                    writer.Write(line);
+                }
+            }
+        }
+
+        private double GetTotalSurfaceArea(Element elem)
+        {
+            double totalSurfaceArea = 0.0;
+            GeometryElement geomElem = elem.get_Geometry(new Options());
+
+            foreach (GeometryObject geomObj in geomElem)
+            {
+                if (geomObj is Solid solid)
+                {
+                    totalSurfaceArea += solid.SurfaceArea;
+                }
+                if (geomObj is GeometryInstance geomInstance)
+                {
+                    foreach (var geomObjj in geomInstance.GetInstanceGeometry())
+                    {
+                        if (geomObjj is Solid solidd)
+                        {
+                            totalSurfaceArea += solidd.SurfaceArea;
+                        }
+                    }
+                }
+            }
+
+            return totalSurfaceArea * 0.09290226; // Convert to square meters
+        }
+
+        private List<ElementId> GetSelectedElementIds(UIDocument uiDoc)
+        {
+            ICollection<ElementId> selectedIds = uiDoc.Selection.GetElementIds();
+            if (selectedIds.Count == 0)
+            {
+                TaskDialog.Show("Selection", "Please select objects");
+            }
+            return new List<ElementId>(selectedIds);
+        }
+    }
+}
